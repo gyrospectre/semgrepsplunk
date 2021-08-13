@@ -1,9 +1,9 @@
 FROM returntocorp/semgrep-agent:latest
 
 WORKDIR /
-COPY execute.sh ./
-RUN chmod +x /execute.sh
+COPY scan-and-log ./
+RUN chmod +x /scan-and-log
 # Install curl and jq from latest APK
 RUN apk add --no-cache curl jq
 
-CMD ["/execute.sh"]
+CMD ["/scan-and-log"]

@@ -1,0 +1,27 @@
+#!/bin/sh
+
+# Run for rules in SEMGREP_RULES env var
+semgrep-agent --json > /output.json
+status=$?
+
+# Output to stdout
+cat /output.json | jq .
+
+# Add BitBucket env vars
+jq '.[] + { 
+BITBUCKET_BUILD_NUMBER: "'${BITBUCKET_BUILD_NUMBER}'",
+BITBUCKET_COMMIT: "'${BITBUCKET_COMMIT}'",
+BITBUCKET_WORKSPACE: "'${BITBUCKET_WORKSPACE}'",
+BITBUCKET_REPO_SLUG: "'${BITBUCKET_REPO_SLUG}'",
+BITBUCKET_BRANCH: "'${BITBUCKET_BRANCH}'",
+BITBUCKET_PR_ID: "'${BITBUCKET_PR_ID}'",
+BITBUCKET_PR_DESTINATION_BRANCH: "'${BITBUCKET_PR_DESTINATION_BRANCH}'",
+}' /output.json | jq --slurp > /output-enhanced.json
+
+# Log to Splunk HEC
+cat /output-enhanced.json \
+| jq -c '{event: .[]}' \
+| curl -k -H "Authorization: Splunk ${SAST_SPLUNK_TOKEN}" https://${SPLUNK_HEC_HOST}/services/collector/event -d @-
+
+# Exit with status from the semgrep scan
+exit $status
