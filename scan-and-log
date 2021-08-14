@@ -1,27 +1,56 @@
 #!/bin/sh
 
+display_usage() {
+    echo "An environment must be supplied!"
+    echo "\nUsage: $0 [--bitbucket] \n"
+}
+
+if [ -z "$1" ]; then
+    display_usage
+    exit 1
+fi
+
 # Run for rules in SEMGREP_RULES env var
-semgrep-agent --json > /output.json
+semgrep-agent --json > /output-raw.json
 status=$?
+
+# Add scan result to output
+if [ $status -eq 0 ]; then
+    echo '[{"scan_passed": true}]' > /output.json
+else
+    jq '.[] + { scan_passed: false }' /output-raw.json | jq --slurp > /output.json
+fi
 
 # Output to stdout
 cat /output.json | jq .
 
-# Add BitBucket env vars
-jq '.[] + { 
-BITBUCKET_BUILD_NUMBER: "'${BITBUCKET_BUILD_NUMBER}'",
-BITBUCKET_COMMIT: "'${BITBUCKET_COMMIT}'",
-BITBUCKET_WORKSPACE: "'${BITBUCKET_WORKSPACE}'",
-BITBUCKET_REPO_SLUG: "'${BITBUCKET_REPO_SLUG}'",
-BITBUCKET_BRANCH: "'${BITBUCKET_BRANCH}'",
-BITBUCKET_PR_ID: "'${BITBUCKET_PR_ID}'",
-BITBUCKET_PR_DESTINATION_BRANCH: "'${BITBUCKET_PR_DESTINATION_BRANCH}'",
-}' /output.json | jq --slurp > /output-enhanced.json
+if [ $1 = "--bitbucket" ]; then
+    # Add BitBucket env vars
+    jq '.[] + { 
+    BITBUCKET_BUILD_NUMBER: "'${BITBUCKET_BUILD_NUMBER}'",
+    BITBUCKET_COMMIT: "'${BITBUCKET_COMMIT}'",
+    BITBUCKET_WORKSPACE: "'${BITBUCKET_WORKSPACE}'",
+    BITBUCKET_REPO_SLUG: "'${BITBUCKET_REPO_SLUG}'",
+    BITBUCKET_BRANCH: "'${BITBUCKET_BRANCH}'",
+    BITBUCKET_PR_ID: "'${BITBUCKET_PR_ID}'",
+    BITBUCKET_PR_DESTINATION_BRANCH: "'${BITBUCKET_PR_DESTINATION_BRANCH}'",
+    }' /output.json | jq --slurp > /output-enhanced.json
+fi
 
 # Log to Splunk HEC
-cat /output-enhanced.json \
+logstatus=`cat /output-enhanced.json \
 | jq -c '{event: .[]}' \
-| curl -k -H "Authorization: Splunk ${SAST_SPLUNK_TOKEN}" https://${SPLUNK_HEC_HOST}/services/collector/event -d @-
+| curl -k -s -H "Authorization: Splunk ${SAST_SPLUNK_TOKEN}" https://${SPLUNK_HEC_HOST}/services/collector/event -d @-`
+
+log_code=`echo $logstatus | jq .code`
+log_error=`echo $logstatus | jq .text`
+
+if [ $log_code -ne 0 ]; then
+    echo "Failed to send report to Splunk! Error:" $log_error
+    exit 1
+fi
+
+echo "Successfully sent report to ${SPLUNK_HEC_HOST}."
 
 # Exit with status from the semgrep scan
 exit $status
